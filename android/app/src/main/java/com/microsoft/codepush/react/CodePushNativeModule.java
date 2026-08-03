@@ -8,6 +8,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.Choreographer;
 import android.view.View;
+import android.view.ViewGroup;
 
 import com.facebook.react.ReactApplication;
 import com.facebook.react.ReactInstanceManager;
@@ -206,8 +207,8 @@ public class CodePushNativeModule extends ReactContextBaseJavaModule {
             try {
                 Method getReactRootView = reactDelegate.getClass().getMethod("getReactRootView");
                 Object reactRootView = getReactRootView.invoke(reactDelegate);
-                if (reactRootView instanceof View) {
-                    View rootView = (View) reactRootView;
+                if (reactRootView instanceof ViewGroup) {
+                    ViewGroup rootView = (ViewGroup) reactRootView;
                     rootView.removeAllViews();
                     rootView.setId(View.NO_ID);
                 }
