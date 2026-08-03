@@ -6,6 +6,7 @@ import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.view.Choreographer;
 import android.view.View;
 
 import com.facebook.react.ReactApplication;
@@ -20,9 +21,7 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
-import com.facebook.react.modules.core.ChoreographerCompat;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
-import com.facebook.react.modules.core.ReactChoreographer;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -30,6 +29,7 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
@@ -123,9 +123,102 @@ public class CodePushNativeModule extends ReactContextBaseJavaModule {
             Field bundleLoaderField = instanceManager.getClass().getDeclaredField("mBundleLoader");
             bundleLoaderField.setAccessible(true);
             bundleLoaderField.set(instanceManager, latestJSBundleLoader);
+
+            // New Architecture interop: also update ReactHostDelegate loader when bridgeless runtime is active.
+            // Old NativeModule APIs still work via RN interop; only the JS bundle owner changed.
+            trySetJSBundleOnReactHost(latestJSBundleLoader);
         } catch (Exception e) {
             CodePushUtils.log("Unable to set JSBundle - CodePush may not support this version of React Native");
             throw new IllegalAccessException("Could not setJSBundle");
+        }
+    }
+
+    // Best-effort New Arch path. Uses reflection so we stay on old module APIs and keep compiling against older RN.
+    private void trySetJSBundleOnReactHost(JSBundleLoader latestJSBundleLoader) {
+        try {
+            Object reactHost = resolveReactHost();
+            if (reactHost == null) {
+                return;
+            }
+
+            Field delegateField = null;
+            // RN 0.76-0.80: mReactHostDelegate; RN 0.81+: reactHostDelegate
+            for (String name : new String[]{"mReactHostDelegate", "reactHostDelegate"}) {
+                try {
+                    delegateField = reactHost.getClass().getDeclaredField(name);
+                    break;
+                } catch (NoSuchFieldException ignored) {
+                }
+            }
+            if (delegateField == null) {
+                return;
+            }
+
+            delegateField.setAccessible(true);
+            Object reactHostDelegate = delegateField.get(reactHost);
+            if (reactHostDelegate == null) {
+                return;
+            }
+
+            Field jsBundleLoaderField = reactHostDelegate.getClass().getDeclaredField("jsBundleLoader");
+            jsBundleLoaderField.setAccessible(true);
+            jsBundleLoaderField.set(reactHostDelegate, latestJSBundleLoader);
+        } catch (Exception ignored) {
+            // Legacy architecture / older RN — ignore.
+        }
+    }
+
+    private Object resolveReactDelegate() {
+        try {
+            Activity currentActivity = getCurrentActivity();
+            if (currentActivity == null) {
+                return null;
+            }
+            Method getReactDelegateMethod = currentActivity.getClass().getMethod("getReactDelegate");
+            return getReactDelegateMethod.invoke(currentActivity);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Object resolveReactHost() {
+        try {
+            Object reactDelegate = resolveReactDelegate();
+            if (reactDelegate == null) {
+                return null;
+            }
+            Field reactHostField = reactDelegate.getClass().getDeclaredField("mReactHost");
+            reactHostField.setAccessible(true);
+            return reactHostField.get(reactDelegate);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean tryReloadViaReactDelegate() {
+        try {
+            Object reactDelegate = resolveReactDelegate();
+            if (reactDelegate == null) {
+                return false;
+            }
+
+            // Avoid root-view id freeze on reload (RN >= 0.77.1)
+            try {
+                Method getReactRootView = reactDelegate.getClass().getMethod("getReactRootView");
+                Object reactRootView = getReactRootView.invoke(reactDelegate);
+                if (reactRootView instanceof View) {
+                    View rootView = (View) reactRootView;
+                    rootView.removeAllViews();
+                    rootView.setId(View.NO_ID);
+                }
+            } catch (Exception ignored) {
+            }
+
+            Method reloadMethod = reactDelegate.getClass().getMethod("reload");
+            reloadMethod.invoke(reactDelegate);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -161,7 +254,11 @@ public class CodePushNativeModule extends ReactContextBaseJavaModule {
                         // has been fixed in RN 0.46.0
                         //resetReactRootViews(instanceManager);
 
-                        instanceManager.recreateReactContextInBackground();
+                        // Prefer ReactDelegate.reload when available (RN 0.74+ / New Arch interop).
+                        // Fall back to the legacy ReactInstanceManager path otherwise.
+                        if (!tryReloadViaReactDelegate()) {
+                            instanceManager.recreateReactContextInBackground();
+                        }
                         mCodePush.initializeUpdateAfterRestart();
                     } catch (Exception e) {
                         // The recreation method threw an unknown exception
@@ -320,7 +417,8 @@ public class CodePushNativeModule extends ReactContextBaseJavaModule {
                             getReactApplicationContext().runOnUiQueueThread(new Runnable() {
                                 @Override
                                 public void run() {
-                                    ReactChoreographer.getInstance().postFrameCallback(ReactChoreographer.CallbackType.TIMERS_EVENTS, new ChoreographerCompat.FrameCallback() {
+                                    // ChoreographerCompat was made internal/removed in RN 0.80
+                                    Choreographer.getInstance().postFrameCallback(new Choreographer.FrameCallback() {
                                         @Override
                                         public void doFrame(long frameTimeNanos) {
                                             if (!latestDownloadProgress.isCompleted()) {

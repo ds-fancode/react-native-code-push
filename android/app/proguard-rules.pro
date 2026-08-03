@@ -21,5 +21,15 @@
     private final ** mBundleLoader;
 }
 
+# New Architecture / bridgeless reload also patches these via reflection.
+-keepclassmembers class com.facebook.react.runtime.ReactHostImpl {
+    private final ** mReactHostDelegate;
+    private final ** reactHostDelegate;
+}
+-keepclassmembers class * implements com.facebook.react.runtime.ReactHostDelegate {
+    <fields>;
+}
+-keep class com.microsoft.codepush.react.** { *; }
+
 # Can't find referenced class org.bouncycastle.**
 -dontwarn com.nimbusds.jose.**

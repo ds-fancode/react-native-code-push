@@ -60,6 +60,17 @@ public class CodePush implements ReactPackage {
         return mServerUrl;
     }
 
+    /**
+     * Preferred on RN New Architecture: PackageList/ReactHost can recreate packages,
+     * and constructing CodePush repeatedly resets update state. Keeps the old ReactPackage API.
+     */
+    public static synchronized CodePush getInstance(String deploymentKey, Context context, boolean isDebugMode) {
+        if (mCurrentInstance == null) {
+            mCurrentInstance = new CodePush(deploymentKey, context, isDebugMode);
+        }
+        return mCurrentInstance;
+    }
+
     public CodePush(String deploymentKey, Context context, boolean isDebugMode) {
         mContext = context.getApplicationContext();
 
