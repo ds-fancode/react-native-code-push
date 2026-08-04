@@ -8,9 +8,9 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.view.Choreographer;
 import android.view.View;
-import android.view.ViewGroup;
 
 import com.facebook.react.ReactApplication;
+import com.facebook.react.ReactHost;
 import com.facebook.react.ReactInstanceManager;
 import com.facebook.react.ReactRootView;
 import com.facebook.react.bridge.Arguments;
@@ -22,7 +22,9 @@ import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
+import com.facebook.react.common.annotations.UnstableReactNativeAPI;
 import com.facebook.react.modules.core.DeviceEventManagerModule;
+import com.facebook.react.runtime.ReactHostDelegate;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -121,104 +123,80 @@ public class CodePushNativeModule extends ReactContextBaseJavaModule {
                 latestJSBundleLoader = JSBundleLoader.createFileLoader(latestJSBundleFile);
             }
 
-            Field bundleLoaderField = instanceManager.getClass().getDeclaredField("mBundleLoader");
-            bundleLoaderField.setAccessible(true);
-            bundleLoaderField.set(instanceManager, latestJSBundleLoader);
+            ReactHost reactHost = resolveReactHost();
+            if (reactHost == null) {
+                // Old Architecture / no ReactHost on the current activity
+                setJSBundleLoaderBridge(instanceManager, latestJSBundleLoader);
+                return;
+            }
 
-            // New Architecture interop: also update ReactHostDelegate loader when bridgeless runtime is active.
-            // Old NativeModule APIs still work via RN interop; only the JS bundle owner changed.
-            trySetJSBundleOnReactHost(latestJSBundleLoader);
+            // RN 0.82+ New Architecture (bridgeless)
+            setJSBundleLoaderBridgeless(reactHost, latestJSBundleLoader);
         } catch (Exception e) {
             CodePushUtils.log("Unable to set JSBundle - CodePush may not support this version of React Native");
             throw new IllegalAccessException("Could not setJSBundle");
         }
     }
 
-    // Best-effort New Arch path. Uses reflection so we stay on old module APIs and keep compiling against older RN.
-    private void trySetJSBundleOnReactHost(JSBundleLoader latestJSBundleLoader) {
-        try {
-            Object reactHost = resolveReactHost();
-            if (reactHost == null) {
-                return;
-            }
-
-            Field delegateField = null;
-            // RN 0.76-0.80: mReactHostDelegate; RN 0.81+: reactHostDelegate
-            for (String name : new String[]{"mReactHostDelegate", "reactHostDelegate"}) {
-                try {
-                    delegateField = reactHost.getClass().getDeclaredField(name);
-                    break;
-                } catch (NoSuchFieldException ignored) {
-                }
-            }
-            if (delegateField == null) {
-                return;
-            }
-
-            delegateField.setAccessible(true);
-            Object reactHostDelegate = delegateField.get(reactHost);
-            if (reactHostDelegate == null) {
-                return;
-            }
-
-            Field jsBundleLoaderField = reactHostDelegate.getClass().getDeclaredField("jsBundleLoader");
-            jsBundleLoaderField.setAccessible(true);
-            jsBundleLoaderField.set(reactHostDelegate, latestJSBundleLoader);
-        } catch (Exception ignored) {
-            // Legacy architecture / older RN — ignore.
-        }
+    private void setJSBundleLoaderBridge(ReactInstanceManager instanceManager, JSBundleLoader latestJSBundleLoader) throws NoSuchFieldException, IllegalAccessException {
+        Field bundleLoaderField = instanceManager.getClass().getDeclaredField("mBundleLoader");
+        bundleLoaderField.setAccessible(true);
+        bundleLoaderField.set(instanceManager, latestJSBundleLoader);
     }
 
+    @kotlin.OptIn(markerClass = UnstableReactNativeAPI.class)
+    private void setJSBundleLoaderBridgeless(ReactHost reactHost, JSBundleLoader latestJSBundleLoader) throws NoSuchFieldException, IllegalAccessException {
+        // RN 0.82+: field is reactHostDelegate (not mReactHostDelegate from older Java RN)
+        Field reactHostDelegateField = reactHost.getClass().getDeclaredField("reactHostDelegate");
+        reactHostDelegateField.setAccessible(true);
+        ReactHostDelegate reactHostDelegate = (ReactHostDelegate) reactHostDelegateField.get(reactHost);
+        if (reactHostDelegate == null) {
+            throw new IllegalAccessException("ReactHostDelegate is null");
+        }
+        Field jsBundleLoaderField = reactHostDelegate.getClass().getDeclaredField("jsBundleLoader");
+        jsBundleLoaderField.setAccessible(true);
+        jsBundleLoaderField.set(reactHostDelegate, latestJSBundleLoader);
+    }
+
+    // RN 0.82+: ReactActivity.getReactDelegate()
     private Object resolveReactDelegate() {
         try {
             Activity currentActivity = getCurrentActivity();
             if (currentActivity == null) {
                 return null;
             }
-            Method getReactDelegateMethod = currentActivity.getClass().getMethod("getReactDelegate");
-            return getReactDelegateMethod.invoke(currentActivity);
+            return currentActivity.getClass().getMethod("getReactDelegate").invoke(currentActivity);
         } catch (Exception e) {
             return null;
         }
     }
 
-    private Object resolveReactHost() {
+    // RN 0.82+: ReactDelegate.reactHost is a public property (getReactHost()).
+    private ReactHost resolveReactHost() {
         try {
             Object reactDelegate = resolveReactDelegate();
             if (reactDelegate == null) {
                 return null;
             }
-            Field reactHostField = reactDelegate.getClass().getDeclaredField("mReactHost");
-            reactHostField.setAccessible(true);
-            return reactHostField.get(reactDelegate);
+            return (ReactHost) reactDelegate.getClass().getMethod("getReactHost").invoke(reactDelegate);
         } catch (Exception e) {
             return null;
         }
     }
 
-    private boolean tryReloadViaReactDelegate() {
+    // RN 0.82+ New Arch: call ReactHost.reload() directly.
+    // Avoid ReactDelegate.reload() — in DEBUG it calls handleReloadJS() (Metro), ignoring our
+    // patched JSBundleLoader; and it can silently no-op if DevSupportManager is null.
+    private boolean tryReloadViaReactHost() {
         try {
-            Object reactDelegate = resolveReactDelegate();
-            if (reactDelegate == null) {
+            ReactHost reactHost = resolveReactHost();
+            if (reactHost == null) {
                 return false;
             }
-
-            // Avoid root-view id freeze on reload (RN >= 0.77.1)
-            try {
-                Method getReactRootView = reactDelegate.getClass().getMethod("getReactRootView");
-                Object reactRootView = getReactRootView.invoke(reactDelegate);
-                if (reactRootView instanceof ViewGroup) {
-                    ViewGroup rootView = (ViewGroup) reactRootView;
-                    rootView.removeAllViews();
-                    rootView.setId(View.NO_ID);
-                }
-            } catch (Exception ignored) {
-            }
-
-            Method reloadMethod = reactDelegate.getClass().getMethod("reload");
-            reloadMethod.invoke(reactDelegate);
+            reactHost.reload("CodePush");
             return true;
         } catch (Exception e) {
+            CodePushUtils.log("ReactHost.reload failed: " + e.getMessage());
             return false;
         }
     }
@@ -255,12 +233,17 @@ public class CodePushNativeModule extends ReactContextBaseJavaModule {
                         // has been fixed in RN 0.46.0
                         //resetReactRootViews(instanceManager);
 
-                        // Prefer ReactDelegate.reload when available (RN 0.74+ / New Arch interop).
-                        // Fall back to the legacy ReactInstanceManager path otherwise.
-                        if (!tryReloadViaReactDelegate()) {
+                        // RN 0.82+: reload via ReactHost when New Arch is active.
+                        // Do not fall back to recreateReactContextInBackground() on New Arch —
+                        // that path can crash / no-op; use Activity recreate instead.
+                        if (tryReloadViaReactHost()) {
+                            mCodePush.initializeUpdateAfterRestart();
+                        } else if (resolveReactHost() != null) {
+                            loadBundleLegacy();
+                        } else {
                             instanceManager.recreateReactContextInBackground();
+                            mCodePush.initializeUpdateAfterRestart();
                         }
-                        mCodePush.initializeUpdateAfterRestart();
                     } catch (Exception e) {
                         // The recreation method threw an unknown exception
                         // so just simply fallback to restarting the Activity (if it exists)

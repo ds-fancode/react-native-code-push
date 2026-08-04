@@ -21,9 +21,8 @@
     private final ** mBundleLoader;
 }
 
-# New Architecture / bridgeless reload also patches these via reflection.
+# RN 0.82+ New Arch: patch ReactHostImpl.reactHostDelegate.jsBundleLoader via reflection.
 -keepclassmembers class com.facebook.react.runtime.ReactHostImpl {
-    private final ** mReactHostDelegate;
     private final ** reactHostDelegate;
 }
 -keepclassmembers class * implements com.facebook.react.runtime.ReactHostDelegate {
