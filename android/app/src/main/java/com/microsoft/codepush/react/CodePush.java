@@ -57,6 +57,7 @@ public class CodePush implements ReactPackage {
     }
 
     public static String getServiceUrl() {
+        CodePushUtils.log("getServiceUrl" + mServerUrl);
         return mServerUrl;
     }
 
@@ -65,6 +66,7 @@ public class CodePush implements ReactPackage {
      * and constructing CodePush repeatedly resets update state. Keeps the old ReactPackage API.
      */
     public static synchronized CodePush getInstance(String deploymentKey, Context context, boolean isDebugMode) {
+        CodePushUtils.log("getInstance called");
         if (mCurrentInstance == null) {
             mCurrentInstance = new CodePush(deploymentKey, context, isDebugMode);
         }
@@ -72,6 +74,7 @@ public class CodePush implements ReactPackage {
     }
 
     public CodePush(String deploymentKey, Context context, boolean isDebugMode) {
+        CodePushUtils.log("constructor 3");
         mContext = context.getApplicationContext();
 
         mUpdateManager = new CodePushUpdateManager(context.getFilesDir().getAbsolutePath());
@@ -96,6 +99,8 @@ public class CodePush implements ReactPackage {
         if (publicKeyFromStrings != null) mPublicKey = publicKeyFromStrings;
 
         String serverUrlFromStrings = getCustomPropertyFromStringsIfExist("ServerUrl");
+
+        CodePushUtils.log("getCustomPropertyFromStringsIfExist " + serverUrlFromStrings);
         if (serverUrlFromStrings != null) mServerUrl = serverUrlFromStrings;
 
         clearDebugCacheIfNeeded(null);
@@ -104,18 +109,19 @@ public class CodePush implements ReactPackage {
 
     public CodePush(String deploymentKey, Context context, boolean isDebugMode, String serverUrl) {
         this(deploymentKey, context, isDebugMode);
+        CodePushUtils.log("constructor 3 + serverUrl" + serverUrl);
         mServerUrl = serverUrl;
     }
 
     public CodePush(String deploymentKey, Context context, boolean isDebugMode, int publicKeyResourceDescriptor) {
         this(deploymentKey, context, isDebugMode);
-
+        CodePushUtils.log("constructor 3 + publicKeyResourceDescriptor");
         mPublicKey = getPublicKeyByResourceDescriptor(publicKeyResourceDescriptor);
     }
 
     public CodePush(String deploymentKey, Context context, boolean isDebugMode, String serverUrl, Integer publicKeyResourceDescriptor) {
         this(deploymentKey, context, isDebugMode);
-
+        CodePushUtils.log("constructor 5 " + serverUrl);
         if (publicKeyResourceDescriptor != null) {
             mPublicKey = getPublicKeyByResourceDescriptor(publicKeyResourceDescriptor);
         }
@@ -146,7 +152,9 @@ public class CodePush implements ReactPackage {
 
         String packageName = mContext.getPackageName();
         int resId = mContext.getResources().getIdentifier("CodePush" + propertyName, "string", packageName);
-
+        CodePushUtils.log("getCustomPropertyFromStringsIfExist propertyName=" + propertyName);
+        CodePushUtils.log("getCustomPropertyFromStringsIfExist propertyName=" + packageName);
+        CodePushUtils.log("getCustomPropertyFromStringsIfExist resId=" + resId);
         if (resId != 0) {
             property = mContext.getString(resId);
 
