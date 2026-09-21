@@ -2,8 +2,9 @@ module.exports = {
     dependency: {
         platforms: {
             android: {
+                // getInstance keeps a single CodePush across ReactHost/PackageList recreations (New Arch).
                 packageInstance:
-                    "new CodePush(getResources().getString(R.string.CodePushDeploymentKey), getApplicationContext(), BuildConfig.DEBUG)"
+                    "CodePush.getInstance(getResources().getString(R.string.CodePushDeploymentKey), getApplicationContext(), BuildConfig.DEBUG)"
             }
         }
     }

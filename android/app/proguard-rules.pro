@@ -21,5 +21,14 @@
     private final ** mBundleLoader;
 }
 
+# RN 0.82+ New Arch: patch ReactHostImpl.reactHostDelegate.jsBundleLoader via reflection.
+-keepclassmembers class com.facebook.react.runtime.ReactHostImpl {
+    private final ** reactHostDelegate;
+}
+-keepclassmembers class * implements com.facebook.react.runtime.ReactHostDelegate {
+    <fields>;
+}
+-keep class com.microsoft.codepush.react.** { *; }
+
 # Can't find referenced class org.bouncycastle.**
 -dontwarn com.nimbusds.jose.**
